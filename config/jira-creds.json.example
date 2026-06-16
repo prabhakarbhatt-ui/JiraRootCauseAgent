@@ -1,0 +1,6 @@
+{
+  "JIRA_AUTH_TOKEN": "your_jira_personal_access_token",
+  "JIRA_USER": "your.name@hpe.com",
+  "JIRA_TOKEN": "optional_if_using_basic_auth",
+  "GITHUB_TOKEN": "your_github_personal_access_token"
+}

@@ -1,0 +1,66 @@
+{"githubOrg": "hpe",
+  
+  "githubBaseUrl": "https://github.hpe.com/api/v3",
+  "modules": [
+    {
+      "name": "hpc-dvs-kernel",
+      "match": ["dvs", "kernel", "dvsof", "panic", "oops", "vmcore"],
+      "repoRelativePath": "hpc-dvs-kernel",
+      "githubRepo": "hpc-dvs-kernel"
+    },
+    {
+      "name": "hpc-rm-atom",
+      "match": ["atom", "crayctld", "runtime manager atom"],
+      "repoRelativePath": "hpc-rm-atom",
+      "githubRepo": "hpc-rm-atom"
+    },
+    {
+      "name": "hpc-rm-pals",
+      "match": ["pals", "process launcher"],
+      "repoRelativePath": "hpc-rm-pals",
+      "githubRepo": "hpc-rm-pals"
+    },
+    {
+      "name": "hpc-rm-pbs-hooks",
+      "match": ["pbs", "hook", "pbs hooks"],
+      "repoRelativePath": "hpc-rm-pbs-hooks",
+      "githubRepo": "hpc-rm-pbs-hooks"
+    },
+    {
+      "name": "hpc-rm-slurm",
+      "match": ["slurm", "srun", "sbatch"],
+      "repoRelativePath": "hpc-rm-slurm",
+      "githubRepo": "hpc-rm-slurm"
+    },
+    {
+      "name": "hpc-rm-slurm-operator",
+      "match": ["slurm operator", "k8s operator"],
+      "repoRelativePath": "hpc-rm-slurm-operator",
+      "githubRepo": "hpc-rm-slurm-operator"
+    },
+    {
+      "name": "hpc-shasta-os-low-noise",
+      "match": ["low-noise", "low noise", "lnm"],
+      "repoRelativePath": "hpc-shasta-os-low-noise",
+      "githubRepo": "hpc-shasta-os-low-noise"
+    },
+    {
+      "name": "hpc-shasta-os-xpmem",
+      "match": ["xpmem"],
+      "repoRelativePath": "hpc-shasta-os-xpmem",
+      "githubRepo": "hpc-shasta-os-xpmem"
+    },
+    {
+      "name": "mpt-pebuildenv",
+      "match": ["mpt", "pebuildenv"],
+      "repoRelativePath": "mpt-pebuildenv",
+      "githubRepo": "mpt-pebuildenv"
+    },
+    {
+      "name": "cdeux-craype",
+      "match": ["craype", "pe"],
+      "repoRelativePath": "cdeux-craype",
+      "githubRepo": "cdeux-craype"
+    }
+  ]
+}
