@@ -1,159 +1,123 @@
-# JIRA Root Cause Agent - Setup Guide
+# Setup Guide — JIRA Root Cause Agent
 
-## Overview
+Complete every step below before running an analysis. Check off each box as you go. This is the single setup, configuration, and first-run reference; the [README](README.md) covers day-to-day usage and [DESIGN-DOCUMENT.md](DESIGN-DOCUMENT.md) covers architecture.
 
-This guide sets up an automated JIRA-to-repository root cause workflow. The automation fetches JIRA issue data, infers module ownership, resolves the target repository path, and creates analysis artifacts without workspace-wide code browsing.
+---
 
-## Project Structure
+## Step 1 — Install prerequisites and clone
 
-```text
-JiraRootCauseAgent/
-├── .github/
-│   ├── agents/
-│   │   └── jira-rootcause.agent.md
-│   ├── prompts/
-│   │   └── jira-rootcause.prompt.md
-│   └── skills/
-│       └── jira-repo-bridge/
-│           └── SKILL.md
-├── Scripts/
-│   ├── fetch-jira.ps1
-│   └── invoke-jira-rootcause.ps1
-├── config/
-│   └── module-repo-map.json
-└── output/
-```
+- [ ] **VS Code** with the **GitHub Copilot** extension installed ([code.visualstudio.com](https://code.visualstudio.com))
+- [ ] **PowerShell 5.1+** available (built-in on Windows)
 
-## Step 1: Configure Credentials
+> No `ripgrep` or local repository clone of the target product is needed — the script searches code directly on GitHub Enterprise via the Code Search API.
 
-Generate a JIRA token first (required):
-
-1. Open `https://jira-pro.it.hpe.com:8443` and sign in.
-2. Open profile settings.
-3. Open Personal Access Tokens (PAT).
-4. Create a new token (example name: `jira-rootcause-agent`).
-5. Copy and store the token securely.
-
-Use that value as `JIRA_AUTH_TOKEN` in one of the credential methods below.
-
-Preferred method: user-level credentials file outside the repository.
-
-Create directory and file:
+Clone this repository and open it directly as your VS Code workspace so the agent picker discovers **JIRA Root Cause Analyst** from the bundled `.github/` automatically:
 
 ```powershell
+git clone https://github.com/prabhakarbhatt-ui/JiraRootCauseAgent.git
+cd JiraRootCauseAgent
+code .
+```
+
+- [ ] Repository cloned and opened as the workspace
+
+---
+
+## Step 2 — Generate a JIRA Personal Access Token
+
+- [ ] Open `https://jira-pro.it.hpe.com:8443` and sign in
+- [ ] Go to profile settings → **Personal Access Tokens**
+- [ ] Click **Create** and name it `jira-rootcause-agent`
+- [ ] Copy the token immediately — it is shown only once — and store it securely
+
+This value becomes `JIRA_AUTH_TOKEN` in Step 4.
+
+---
+
+## Step 3 — Generate a GitHub Personal Access Token
+
+A GitHub PAT is **required** for code investigation: the script searches source repositories on GitHub Enterprise. A pre-flight connectivity check runs first and prints a warning if GitHub is unreachable or the token is invalid; the run still continues and gathers JIRA context, but the code-access actions (`search`/`readfile`/`listdir`) will fail until the token/network is fixed.
+
+> **Which GitHub instance?** This project targets **HPE GitHub Enterprise** at `https://github.hpe.com`.
+> Do **not** use a `github.com` token — it will be rejected.
+> If your organization uses a different GitHub Enterprise URL, set `GITHUB_ENTERPRISE_URL` (see [Custom GitHub Enterprise URL](#custom-github-enterprise-url)).
+
+**Option A — Classic PAT (recommended for GitHub Enterprise):**
+
+Fine-grained PATs are a `github.com`-only feature and are not available on most GitHub Enterprise Server instances, including `github.hpe.com`.
+
+- [ ] Go to `https://github.hpe.com/settings/tokens` → **Generate new token (classic)**
+- [ ] Set a name (e.g. `jira-rootcause-agent`) and an expiration date
+- [ ] Select the **`repo`** scope (read access to private repos), or `public_repo` for public repos only
+- [ ] Click **Generate token** and copy it immediately (shown only once)
+
+**Option B — Fine-grained PAT (only if your GitHub Enterprise supports it):**
+
+- [ ] Go to `https://github.hpe.com/settings/tokens?type=beta` → **Generate new token**
+- [ ] Set a name and expiration date
+- [ ] Under **Repository access**, select the repos in `config/module-repo-map.json`
+- [ ] Under **Permissions → Repository**, set **Contents** to `Read-only`
+- [ ] Click **Generate token** and copy it immediately (shown only once)
+
+This value becomes `GITHUB_TOKEN` in Step 4.
+
+---
+
+## Step 4 — Configure credentials
+
+**Recommended — credentials file outside the repository.** Run from inside the `JiraRootCauseAgent/` directory:
+
+```powershell
+cd C:\path\to\JiraRootCauseAgent
 New-Item -ItemType Directory -Force -Path "$HOME/.jira-agent" | Out-Null
 Copy-Item "config/jira-creds.json.example" "$HOME/.jira-agent/jira-rootcause-creds.json"
 ```
 
-Recommended file:
-
-- `$HOME/.jira-agent/jira-rootcause-creds.json`
-
-Optional override for custom path:
-
-```powershell
-$env:JIRA_CREDS_FILE = "D:/secure/jira-rootcause-creds.json"
-```
-
-Local fallback (supported for compatibility):
-
-Create this file:
-
-- `JiraRootCauseAgent/config/jira-creds.json`
-
-Template (copy from `JiraRootCauseAgent/config/jira-creds.json.example`):
+Edit `$HOME/.jira-agent/jira-rootcause-creds.json` and replace the placeholders with the tokens from Steps 2 and 3:
 
 ```json
 {
-	"JIRA_AUTH_TOKEN": "your_jira_personal_access_token",
-	"JIRA_USER": "your.name@hpe.com",
-	"JIRA_TOKEN": "optional_if_using_basic_auth"
-}
-```
-
-How to update credentials later:
-
-1. Open `$HOME/.jira-agent/jira-rootcause-creds.json` (the recommended location).
-2. Replace token/user values.
-3. Save and rerun the automation command.
-
-> If you used the local fallback instead, the file is at `JiraRootCauseAgent/config/jira-creds.json`.
-
-Alternative method: environment variables.
-
-```powershell
-# Option A (recommended)
-[System.Environment]::SetEnvironmentVariable('JIRA_AUTH_TOKEN', 'your_token_here', 'User')
-
-# Option B
-[System.Environment]::SetEnvironmentVariable('JIRA_USER', 'your.name@hpe.com', 'User')
-[System.Environment]::SetEnvironmentVariable('JIRA_TOKEN', 'your_token_here', 'User')
-```
-
-Credential resolution order in scripts:
-
-1. `JIRA_CREDS_FILE` path (if set)
-2. `$HOME/.jira-agent/jira-rootcause-creds.json`
-3. `JiraRootCauseAgent/config/jira-creds.json`
-4. Process environment variables
-5. User-scope environment variables
-
-## Step 2: Generate a GitHub Personal Access Token
-
-A GitHub PAT is required if the agent needs to read source repositories hosted on GitHub Enterprise (`github.hpe.com`).
-
-> **Which GitHub instance?**  
-> This project targets **HPE GitHub Enterprise** at `https://github.hpe.com`.  
-> Do **not** use `github.com` tokens — they will be rejected.  
-> If your organization uses a different GitHub Enterprise URL, set `GITHUB_ENTERPRISE_URL` (see below).
-
-### Option A — Classic PAT (recommended for GitHub Enterprise)
-
-Fine-grained PATs are a `github.com`-only feature and are **not available on most GitHub Enterprise Server instances**, including `github.hpe.com`. Use a Classic PAT:
-
-1. Go to `https://github.hpe.com/settings/tokens`.
-2. Click **Generate new token (classic)**.
-3. Set a descriptive name (e.g., `jira-rootcause-agent`) and an expiration date.
-4. Select the **`repo`** scope (gives read access to private repositories).
-   - For public repositories only, select `public_repo` instead.
-5. Click **Generate token** — copy it immediately (shown only once).
-
-### Option B — Fine-grained PAT (only if your GitHub Enterprise supports it)
-
-If your GitHub Enterprise administrator has enabled fine-grained PATs:
-
-1. Go to `https://github.hpe.com/settings/tokens?type=beta`.
-2. Click **Generate new token**.
-3. Set a descriptive name (e.g., `jira-rootcause-agent`) and an expiration date.
-4. Under **Repository access**, select **Only select repositories** and choose the repos listed in `config/module-repo-map.json`.
-5. Under **Permissions → Repository**, set **Contents** to `Read-only`.
-6. Click **Generate token** — copy it immediately (shown only once).
-
-### Store the token
-
-Add `GITHUB_TOKEN` to your credentials file:
-
-```json
-{
-  "JIRA_AUTH_TOKEN": "your_jira_personal_access_token",
+  "JIRA_AUTH_TOKEN": "PASTE_YOUR_JIRA_PAT_HERE",
   "JIRA_USER": "your.name@hpe.com",
-  "GITHUB_TOKEN": "your_github_enterprise_pat"
+  "GITHUB_TOKEN": "PASTE_YOUR_GITHUB_PAT_HERE"
 }
 ```
 
-Or set it as an environment variable:
+- [ ] File created at `$HOME/.jira-agent/jira-rootcause-creds.json`
+- [ ] JIRA token replaced (not a placeholder)
+- [ ] GitHub token replaced (not a placeholder)
+
+To update credentials later, edit the same file and rerun the command in Step 6.
+
+**Alternative — environment variables:**
 
 ```powershell
 # Session only
-$env:GITHUB_TOKEN = "your_github_pat_here"
+$env:JIRA_AUTH_TOKEN = "your_token_here"
+$env:GITHUB_TOKEN     = "your_github_pat_here"
 
 # Permanent (User scope)
+[System.Environment]::SetEnvironmentVariable('JIRA_AUTH_TOKEN', 'your_token_here', 'User')
 [System.Environment]::SetEnvironmentVariable('GITHUB_TOKEN', 'your_github_pat_here', 'User')
 ```
 
+A local fallback file at `config/jira-creds.json` (gitignored) is also supported for compatibility — never commit real values to it.
+
+> `JIRA_AUTH_TOKEN` authenticates to the JIRA REST API (`jira-pro.it.hpe.com`); `GITHUB_TOKEN` authenticates to the GitHub Enterprise API (`github.hpe.com`). They are not interchangeable.
+
+### Credential resolution order
+
+The scripts resolve credentials in this order (first match wins):
+
+1. File path in `JIRA_CREDS_FILE` (if set)
+2. `$HOME/.jira-agent/jira-rootcause-creds.json` **(recommended)**
+3. `config/jira-creds.json` (local fallback — gitignored)
+4. `JIRA_AUTH_TOKEN` process/user environment variable (bearer token)
+5. `JIRA_USER` + `JIRA_TOKEN` environment variables (basic auth)
+
 ### Custom GitHub Enterprise URL
 
-If your organization's GitHub Enterprise is **not** at `github.hpe.com`, override the base URL:
+If your GitHub Enterprise is not at `github.hpe.com`, override the base URL:
 
 ```powershell
 # Session only
@@ -165,30 +129,17 @@ $env:GITHUB_ENTERPRISE_URL = "https://github.your-company.com"
 
 The script reads `githubBaseUrl` from `config/module-repo-map.json` as the default; `GITHUB_ENTERPRISE_URL` overrides it at runtime.
 
-> **Note:** `JIRA_AUTH_TOKEN` authenticates to the Jira REST API (`jira-pro.it.hpe.com`). `GITHUB_TOKEN` authenticates to the GitHub Enterprise API (`github.hpe.com`). Do not use one in place of the other.
+---
 
-## Step 3: Tune Module Mapping
+## Step 5 — Verify the module map
 
-Edit `config/module-repo-map.json`. This file has top-level settings and a `modules` array:
+- [ ] Open `config/module-repo-map.json`
+- [ ] Confirm `githubOrg` is set and your module has a `githubRepo` that exists on GitHub Enterprise
+- [ ] If your module is missing, add it — see [CONTRIBUTING.md](CONTRIBUTING.md) for the field reference and keyword tips
 
-### Top-level fields
+---
 
-| Field | Description |
-|-------|-------------|
-| `githubOrg` | The GitHub organization that owns the repositories (e.g., `"hpe"`). Used when constructing GitHub API URLs. |
-| `githubBaseUrl` | Base URL of the GitHub Enterprise REST API (e.g., `"https://github.hpe.com/api/v3"`). Overridden at runtime by `GITHUB_ENTERPRISE_URL` env var. |
-
-### Per-module fields
-
-| Field | Description |
-|-------|-------------|
-| `name` | Logical module name (used in analysis output and `context.json`) |
-| `match` | Keywords scored against JIRA text to identify which module owns an issue |
-| `githubRepo` | **Required.** Repository name on GitHub Enterprise under `githubOrg`. This is the repo the script searches and reads source from (e.g., `"hpc-dvs-kernel"`). |
-
-Always update this map when new modules are added.
-
-## Step 4: Run End-To-End Automation
+## Step 6 — Run a test analysis
 
 Make sure you are in the `JiraRootCauseAgent/` directory:
 
@@ -197,52 +148,51 @@ cd C:\path\to\JiraRootCauseAgent
 powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -IssueId CAST-40070
 ```
 
-Execution sequence:
+- [ ] Pre-flight GitHub connectivity check runs (a warning here does not stop the run)
+- [ ] Script completes without error
+- [ ] An `output/CAST-40070/` folder is produced with the JIRA data, resolved default module/repository, and a context bundle (`context-bundle.md`, `context.json`)
 
-1. Pre-flight: test GitHub Enterprise connectivity (the run aborts immediately if it fails).
-2. Fetch JIRA issue JSON (all fields, comments, attachments, linked issues).
-3. Infer the owning module using keyword scoring and resolve `githubOrg/githubRepo`.
-4. Extract crash evidence (BUG/Oops lines, call trace frames, kernel thread, fault address, log messages).
-5. Build targeted GitHub code-search queries and search the repository via the GitHub Code Search API.
-6. Fetch matched C/H source files from GitHub and run crash-path analysis.
-7. Generate the analysis scaffold and context metadata.
+For the full execution sequence and a description of each generated artifact, see [DESIGN-DOCUMENT.md](DESIGN-DOCUMENT.md).
 
-## Generated Artifacts
+---
 
-For issue `<KEY>`:
+## Step 7 — Use in VS Code Copilot Chat
 
-- `output/<KEY>/<KEY>.json`: raw JIRA payload
-- `output/<KEY>/repo-search.txt`: GitHub Code Search API evidence (grouped by query label)
-- `output/<KEY>/code-analysis.json`: crash-path analysis of source files fetched from GitHub (when C/H files match)
-- `output/<KEY>/context.json`: execution metadata, resolved repository, crash evidence summary
-- `output/<KEY>/<KEY>-analysis.md`: editable analysis draft
+**Agent mode:**
 
-## Copilot Agent Integration
+1. Open Copilot Chat (`Ctrl+Shift+I`)
+2. Click the agent picker and select **JIRA Root Cause Analyst**
+3. Type the issue key: `CAST-40070`
 
-- Agent definition: `.github/agents/jira-rootcause.agent.md`
-- Prompt: `.github/prompts/jira-rootcause.prompt.md`
-- Skill: `.github/skills/jira-repo-bridge/SKILL.md`
+**Slash prompt:**
 
-Recommended request style:
-
-```text
-Analyze CAST-40070 using JIRA Root Cause Analyst
 ```
+/jira-rootcause CAST-40070
+```
+
+- [ ] Agent appears in the agent picker
+- [ ] Slash prompt `/jira-rootcause` is available in chat
 
 > If your GitHub Enterprise is not at `github.hpe.com`, set `GITHUB_ENTERPRISE_URL` or `githubBaseUrl` before invoking the agent.
 
-## Validation Checklist
+---
 
-Run after any script change:
+## Troubleshooting
 
-1. Verify fetch works for a known issue.
-2. Verify module inference chooses expected module.
-3. Verify the resolved GitHub repository is reachable (pre-flight passes).
-4. Verify `repo-search.txt` has matches for at least one query.
-5. Verify `context.json` and analysis markdown are generated.
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Missing credentials` | No credential file/env var found, or token is still a placeholder | Re-check Step 4 |
+| `Unable to infer module` | No module keyword matched the JIRA text | Add keywords to `config/module-repo-map.json` (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
+| `Cannot reach GitHub API` (pre-flight warning) | Network/VPN blocked or wrong base URL | Check VPN/network; set `GITHUB_ENTERPRISE_URL` or `githubBaseUrl`. The run continues, but code-access actions will fail until fixed |
+| `401 Unauthorized` (JIRA) | `JIRA_AUTH_TOKEN` missing or wrong | Verify the token in your credentials file |
+| `401 Unauthorized` (GitHub) | Token generated on `github.com`, not `github.hpe.com` | Regenerate on `github.hpe.com` |
+| `403 Forbidden` (GitHub) | Token lacks the `repo` scope | Regenerate the classic PAT with the `repo` scope |
+| Wrong repository inferred / model can't find relevant code | Module keywords didn't match the JIRA text | Check `output/<KEY>/context.json` (`inferredComponent`, `defaultRepo`); add better tokens to the module's `match` list and confirm `githubRepo` |
 
-## Known Constraints
+---
+
+## Known constraints
 
 - Module inference is keyword-based and may need tuning.
-- A reachable GitHub Enterprise instance and a valid `GITHUB_TOKEN` are required; the run aborts at the pre-flight check otherwise.
-- Script does not apply code fixes automatically; it generates fix recommendations.
+- A reachable GitHub Enterprise instance and a valid `GITHUB_TOKEN` are required for code investigation; the pre-flight check only warns if they are unavailable, and the code-access actions fail until fixed.
+- The script does not apply code fixes automatically; it generates fix recommendations.

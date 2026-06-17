@@ -3,11 +3,37 @@ param(
     [string]$IssueId,
 
     [string]$OutputDir = "output",
-    [string]$JiraBaseUrl = "https://jira-pro.it.hpe.com:8443"
+    [string]$JiraBaseUrl = "https://jira-pro.it.hpe.com:8443",
+
+    # Skip downloading any single attachment larger than this (bytes). Default 50 MB.
+    [long]$MaxAttachmentBytes = 52428800
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Returns $true when an attachment looks like a textual log/console/crash dump
+# that is worth downloading and parsing for crash evidence.
+function Test-IsLogAttachment {
+    param(
+        [string]$Filename,
+        [string]$MimeType
+    )
+
+    # Recognised log-ish extensions (optionally gzip-compressed)
+    if ($Filename -match '(?i)\.(log|txt|out|dmesg|console|messages|trace|dump|crash|syslog|err|nfo)(\.gz)?$') {
+        return $true
+    }
+    # Common kernel/console log naming conventions even without a clear extension
+    if ($Filename -match '(?i)(dmesg|console|syslog|messages|crash|panic|oops|backtrace|callhome|vmcore-dmesg)') {
+        return $true
+    }
+    # Any text/* MIME type
+    if ($MimeType -match '^(?i)text/') {
+        return $true
+    }
+    return $false
+}
 
 function Resolve-CredentialValue {
     param(
@@ -123,3 +149,76 @@ $jsonPath = Join-Path $issueFolder "$IssueId.json"
 $data | ConvertTo-Json -Depth 30 | Set-Content -Encoding UTF8 $jsonPath
 
 Write-Host "Saved JIRA JSON to $jsonPath"
+
+# ---------------------------------------------------------------------------
+# Download log attachments for crash analysis.
+# IMPORTANT: attachments uploaded by the issue's ASSIGNEE are skipped, because
+# those are frequently test logs the assignee produced while investigating,
+# not the original failure evidence we want to root-cause.
+# ---------------------------------------------------------------------------
+$assigneeName = if ($data.fields.assignee) { [string]$data.fields.assignee.displayName } else { "" }
+$attachmentsDir = Join-Path $issueFolder "attachments"
+$manifest = [System.Collections.Generic.List[object]]::new()
+
+if ($data.fields.PSObject.Properties.Name -contains 'attachment' -and $data.fields.attachment) {
+    foreach ($a in $data.fields.attachment) {
+        $filename = [string]$a.filename
+        $author   = if ($a.author) { [string]$a.author.displayName } else { "" }
+        $mime     = [string]$a.mimeType
+        $size     = [long]$a.size
+        $url      = [string]$a.content
+
+        $entry = [ordered]@{
+            Filename      = $filename
+            Author        = $author
+            MimeType      = $mime
+            Size          = $size
+            IsLog         = (Test-IsLogAttachment -Filename $filename -MimeType $mime)
+            Downloaded    = $false
+            LocalPath     = ""
+            SkippedReason = ""
+        }
+
+        if (-not $entry.IsLog) {
+            $entry.SkippedReason = "not a log/text file"
+            $manifest.Add($entry); continue
+        }
+        if ($assigneeName -and $author -eq $assigneeName) {
+            $entry.SkippedReason = "uploaded by assignee ($author) - skipped (may be a test log)"
+            Write-Host "  Skipping assignee-uploaded log: $filename (by $author)"
+            $manifest.Add($entry); continue
+        }
+        if ($size -gt $MaxAttachmentBytes) {
+            $entry.SkippedReason = "exceeds size limit ($size bytes > $MaxAttachmentBytes)"
+            Write-Warning "  Skipping oversized attachment: $filename ($size bytes)"
+            $manifest.Add($entry); continue
+        }
+        if ([string]::IsNullOrWhiteSpace($url)) {
+            $entry.SkippedReason = "no content URL"
+            $manifest.Add($entry); continue
+        }
+
+        if (-not (Test-Path $attachmentsDir)) {
+            New-Item -ItemType Directory -Path $attachmentsDir -Force | Out-Null
+        }
+        $safeName = $filename -replace '[\\/:*?"<>|]', '_'
+        $localPath = Join-Path $attachmentsDir $safeName
+        try {
+            Invoke-WebRequest -Uri $url -Headers $headers -Method Get -UseBasicParsing `
+                -OutFile $localPath -TimeoutSec 120
+            $entry.Downloaded = $true
+            $entry.LocalPath  = $localPath
+            Write-Host "  Downloaded log attachment: $filename ($size bytes, by $author)"
+        }
+        catch {
+            $entry.SkippedReason = "download failed: $($_.Exception.Message)"
+            Write-Warning "  Failed to download attachment '$filename': $($_.Exception.Message)"
+        }
+        $manifest.Add($entry)
+    }
+}
+
+$manifestPath = Join-Path $issueFolder "attachments-manifest.json"
+@($manifest) | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $manifestPath
+$downloadedCount = @($manifest | Where-Object { $_.Downloaded }).Count
+Write-Host "Saved attachment manifest to $manifestPath ($($manifest.Count) attachment(s), $downloadedCount log(s) downloaded for analysis)"

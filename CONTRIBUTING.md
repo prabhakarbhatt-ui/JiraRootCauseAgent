@@ -46,7 +46,7 @@ Add this entry to the `modules` array in `config/module-repo-map.json`:
 ### Keyword Selection Tips
 
 - Use lowercase only (the script lowercases all JIRA text before matching).
-- Include: binary names, kernel module names, error message prefixes, component JIRA names, abbreviations.
+- Include: binary names, module/package names, error message prefixes, component JIRA names, abbreviations.
 - Avoid: generic words like `error`, `issue`, `fail`, `node` — these are in the stop-word list and won't help.
 - Test: run a real JIRA issue and check `output/<KEY>/context.json` to verify the correct module is selected.
 
@@ -61,8 +61,8 @@ Add this entry to the `modules` array in `config/module-repo-map.json`:
    ```powershell
    powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -IssueId <KEY>
    ```
-4. Open `output/<KEY>/context.json` and confirm `module` shows the new module name.
-5. Check `output/<KEY>/repo-search.txt` has GitHub code-search hits inside the correct repository.
+4. Open `output/<KEY>/context.json` and confirm `inferredComponent` shows the new module name and `defaultRepo` resolves to the correct repository.
+5. Open `output/<KEY>/context-bundle.md` and confirm the new repository appears under the available repositories list.
 
 ---
 
@@ -88,8 +88,10 @@ Fetches JIRA JSON via REST API. Only change this if:
 Main entrypoint. Change this if:
 - Module scoring logic needs to change (see `Resolve-Module` function).
 - New output files are needed.
-- The analysis scaffold format changes.
-- The GitHub search query construction changes (see `Get-CrashSearchQueries`).
+- The context bundle format changes (see `Build-ContextBundle`).
+- The code-access actions (`search`/`readfile`/`listdir`) need to change.
+
+> Note: the current flow performs no crash-specific evidence extraction or query generation; all evidence interpretation is delegated to the chat model.
 
 ---
 

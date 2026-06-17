@@ -1,46 +1,61 @@
-# Prompt: JIRA Root Cause Mining
+# Prompt: JIRA Root Cause Analysis
 
 ## Objective
 
-Automate root cause analysis from a JIRA issue key to GitHub repository-scoped code evidence, without browsing the entire workspace.
+Diagnose the **actual** root cause of any JIRA issue and propose a fix, grounded
+in the real source code. The reasoning is done by the model selected in the VS
+Code Copilot Chat window. A helper PowerShell script only gathers JIRA context
+and provides on-demand code-access tools (no LLM is called by the script).
 
-## How To Invoke This Prompt
+This is generic: it handles crashes, logic bugs, races, performance regressions,
+config/build errors, security issues — in any language. It is **not** limited to
+kernel crashes or NULL-pointer dereferences.
 
-In VS Code Copilot Chat, type `/jira-rootcause` followed by the issue key:
+## How To Invoke
+
+In VS Code Copilot Chat, select the **JIRA Root Cause Analyst** agent and type
+the issue key, or use the prompt:
 
 ```
-/jira-rootcause CAST-40070
+/jira-rootcause CAST-40143
 ```
-
-Or select the **JIRA Root Cause Analyst** agent from the agent picker and type the issue key directly.
 
 ## Required Input
 
-- JIRA key (example: `CAST-40070`)
-- Optional: `GITHUB_ENTERPRISE_URL` if your org uses GitHub Enterprise instead of github.com
+- JIRA key (example: `CAST-40143`)
+- Optional: `GITHUB_ENTERPRISE_URL` (or `githubBaseUrl` in `module-repo-map.json`)
+  if your org uses GitHub Enterprise.
 
 ## Workflow
 
-1. Run `Scripts/invoke-jira-rootcause.ps1 -IssueId <KEY>`.
-   - **The script tests HPE GitHub connectivity as its very first action — before fetching JIRA or doing anything else.**
-   - If GitHub is unreachable or authentication fails, the script stops immediately with a descriptive error. **Do not proceed. Do not fetch JIRA. Do not search locally. Halt and report the exact error.**
-   - If the pre-flight passes, the script fetches JIRA JSON, infers the owning module, resolves `githubOrg/githubRepo` from `config/module-repo-map.json`, and searches code on GitHub.
-   - Output lands in `output/<KEY>/`.
-2. Read `output/<KEY>/context.json` to confirm the resolved module and GitHub repository.
-4. Read `output/<KEY>/repo-search.txt` for raw GitHub code search hits.
-5. Cross-reference hits with the JIRA JSON at `output/<KEY>/<KEY>.json` (stack traces, error messages, comments).
-6. Produce root cause, reproducible trigger path, and fix suggestion.
-7. Save the final analysis to `output/<KEY>/<KEY>-analysis.md`.
+1. **Gather context:**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action analyze -IssueId <KEY>
+   ```
+   Writes `output/<KEY>/context-bundle.md`, `output/<KEY>/context.json`, and the
+   raw `output/<KEY>/<KEY>.json`.
+2. Read `context-bundle.md` and `context.json`; form a hypothesis.
+3. Investigate the real code using the script's tool actions (run via execute):
+   - `-Action search   -Query '<terms>' -Repo <repo>`
+   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>`
+   - `-Action listdir  -Path <dir> -Repo <repo>`
+   - `-Action listrepos`
+4. Verify every conclusion against code you actually read.
+5. Write the final report to `output/<KEY>/<KEY>-analysis.md`.
 
-## Module Inference
+## Repository Inference
 
-The script scores each module in `config/module-repo-map.json` against JIRA text (summary, description, components, labels, comments). The highest-scoring module wins. If confidence is low (score = 0), the script throws — update `config/module-repo-map.json` or ask the user for a module name.
+The script scores each component in `config/module-repo-map.json` against JIRA
+text and records the best match as `defaultRepo` in `context.json`. You may
+override it (use `-Action listrepos`, then pass `-Repo <name>` to the search /
+readfile / listdir actions).
 
-## GitHub Configuration
+## Configuration
 
-- Set `githubOrg` in `config/module-repo-map.json` to your GitHub organization.
-- Each module entry needs a `githubRepo` field.
-- For GitHub Enterprise, set `GITHUB_ENTERPRISE_URL` env var or `githubBaseUrl` in `module-repo-map.json`.
+- `githubOrg` in `config/module-repo-map.json` set to your GitHub organization.
+- Each component entry needs a `githubRepo` field.
+- For GitHub Enterprise: `GITHUB_ENTERPRISE_URL` env var or `githubBaseUrl` in
+  `module-repo-map.json`.
 
 ## Credential Resolution Order
 
@@ -51,22 +66,21 @@ The script scores each module in `config/module-repo-map.json` against JIRA text
 5. `JIRA_USER` + `JIRA_TOKEN` env vars (basic auth)
 6. `GITHUB_TOKEN` field in credentials file or `GITHUB_TOKEN` env var
 
-See `SETUP-GUIDE.md` for setup steps.
+See `SETUP-GUIDE.md`.
 
 ## Rules
 
-- Do not perform workspace-wide source browsing.
-- Do not request secrets in chat — credentials are read from files or env vars only.
-- If module inference confidence is low, ask the user to provide a module name override.
-- **If HPE GitHub is not reachable, stop immediately and report the exact error. Do not fetch JIRA. Do not fall back to local search. The analysis cannot proceed without GitHub access.**
+- Do not request secrets in chat — credentials are read from files / env vars.
+- Ground every claim in JIRA evidence or code you actually read; cite the source.
+- Never invent file contents, line numbers, function names, or APIs.
+- If evidence is insufficient, say so and list exactly what is needed. Do not
+  fabricate a root cause or a fix.
 
 ## Deliverables
 
-For issue `<KEY>`, produce:
-
 ```
 output/<KEY>/<KEY>.json          — raw JIRA data
-output/<KEY>/context.json        — resolved module, GitHub repo, search tokens
-output/<KEY>/repo-search.txt     — GitHub code search hits
-output/<KEY>/<KEY>-analysis.md   — final root cause analysis
+output/<KEY>/context-bundle.md   — gathered JIRA context for reasoning
+output/<KEY>/context.json        — inferred repo + metadata
+output/<KEY>/<KEY>-analysis.md   — final root cause analysis (you write this)
 ```

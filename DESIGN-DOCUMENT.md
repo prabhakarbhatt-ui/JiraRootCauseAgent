@@ -4,7 +4,7 @@
 
 This document defines the design of the JIRA Root Cause Agent so developers can safely enhance it.
 
-The system takes a JIRA issue key, gathers full issue context, maps the issue to a target GitHub repository, searches code with crash-aware queries, and emits evidence-bound analysis artifacts.
+The system takes a JIRA issue key, gathers full issue context, maps the issue to a default GitHub repository, and hands off to the chat model, which investigates the code and emits evidence-bound analysis artifacts. The agent is issue-type and language agnostic; it is not specialized for any single failure class.
 
 ## 2. Goals and Non-Goals
 
@@ -18,7 +18,7 @@ The system takes a JIRA issue key, gathers full issue context, maps the issue to
 ### Non-Goals
 
 - Automatic patch creation or auto-commit to source repositories.
-- Runtime execution of product binaries or kernel reproducer automation.
+- Runtime execution of product binaries or reproducer automation.
 - Accessing external systems beyond JIRA and GitHub Enterprise APIs.
 
 ## 3. System Context
@@ -30,9 +30,8 @@ Inputs:
 
 Outputs:
 - Raw JIRA payload.
-- Repository search evidence.
-- Optional source-level crash-path analysis.
-- Final markdown analysis report.
+- Context bundle for the chat model.
+- Final markdown analysis report (written by the model).
 - Context metadata for downstream tooling.
 
 Primary scripts:
@@ -51,22 +50,21 @@ Primary configuration:
 flowchart TD
     A[IssueId Input] --> B[Pre-flight GitHub Connectivity]
     B -->|Pass| C[Fetch JIRA JSON]
-    B -->|Fail| X[Stop with actionable error]
+    B -->|Warn| C
     C --> D[Extract full JIRA data]
     D --> E[Load and parse log attachments]
-    E --> F[Infer module from combined text]
-    F --> G[Resolve githubOrg/githubRepo]
-    G --> H[Extract crash evidence]
-    H --> I[Build targeted code-search queries]
-    I --> J[Search GitHub code API]
-    J --> K[Fetch matched C/H files]
-    K --> L[Crash-path source analysis]
-    L --> M[Build evidence-only markdown report]
-    M --> N[Write context.json and artifacts]
+    E --> F[Infer default module from combined text]
+    F --> G[Resolve githubOrg/githubRepo as default]
+    G --> H[Build context bundle + context.json]
+    H --> I[Hand off to chat model]
+    I --> J[Model investigates via search/readfile/listdir]
+    J --> K[Model writes evidence-only markdown report]
 ```
 
-Design invariant:
-- GitHub connectivity is checked before JIRA fetch, and the run aborts immediately if GitHub is not reachable.
+Design invariants:
+- GitHub connectivity is checked before JIRA fetch; a failure prints a warning (it does not abort the run), so JIRA context is still gathered while the code-access actions remain unusable until connectivity/auth is fixed.
+- The script gathers context and exposes code-access tools; it does NOT itself perform LLM reasoning, evidence classification, or analysis. All investigation and synthesis is done by the chat model.
+- The agent is issue-type and language agnostic. It is not specialized for any single failure class.
 
 ## 5. Runtime Flow (Detailed)
 
@@ -78,10 +76,10 @@ Implementation owner: Scripts/invoke-jira-rootcause.ps1
 - Resolve GitHub org and base URL.
 - Resolve GitHub token from credential chain.
 - Verify GitHub API reachability and auth.
-- Abort on configuration/auth/network errors.
+- Warn (do not abort) on auth/network failure; abort only on configuration errors such as a missing/placeholder githubOrg.
 
 Why this order:
-- Prevent partial runs and false confidence when repo access is unavailable.
+- Surface repo-access problems early so the analyst knows the code-access actions may fail, while still gathering JIRA context.
 
 ### Step 1: JIRA fetch
 
@@ -110,51 +108,97 @@ Implementation owner: Scripts/invoke-jira-rootcause.ps1
 - Resolve target repository as githubOrg/githubRepo.
 - Abort if module has no githubRepo.
 
-### Step 4: Crash evidence extraction
+#### Step 3a: Repository selection scope (does it search all repos?)
 
-- Parse for BUG/Oops markers, call-trace frames, function names, thread names, crash address, poison hints, error codes, and diagnostic log lines.
-- Classify crash type using rule-based heuristics.
+Short answer: no. The agent does **not** scan every repository in the map at
+once. It selects a single repository per operation, while keeping the full map
+available so the analyst (or chat model) can pivot to any other repo on demand.
 
-### Step 5: Search strategy generation
+How repository selection works:
 
-- Build labeled GitHub code-search queries from strongest evidence first:
-  - thread names
-  - trace function names
-  - quoted log fragments
-  - crash offset hints
-  - bug keyword reductions
-  - error codes
-- Fallback to summary-derived tokens only when crash evidence is empty.
+- `Resolve-Module` reads the combined JIRA text (summary + description +
+  comments + environment + accepted attachment logs) and scores **each** module
+  in the map by counting how many of that module's `match` keywords appear in
+  the text.
+- The single highest-scoring module wins and becomes the **default repository**
+  (`githubOrg/githubRepo`). This is treated as a hint only, not a hard binding.
+  If no keyword matches, the agent falls back to the first module listed in the
+  map as the default.
+- All other modules in the map are still loaded and exposed. During the
+  `analyze` action, the context bundle (`output/<KEY>/context-bundle.md`) and
+  `context.json` list **every** configured repository under
+  `availableRepos`, alongside its keywords, so the model can override the
+  inferred default.
 
-### Step 6: Repository evidence collection
+How investigation actually queries repositories:
 
-- Execute each labeled query using GitHub Search API.
-- Save grouped hits to output/<KEY>/repo-search.txt.
-- Collect unique matched C/H file paths for deeper analysis.
+- Each `search`, `readfile`, and `listdir` action targets exactly **one**
+  repository, resolved by `Resolve-RepoName`: an explicit `-Repo` argument wins;
+  otherwise the inferred default repo is used.
+- The GitHub code search is scoped with `repo:<org>/<repo>`, so a single call
+  never spans multiple repositories.
+- To investigate multiple components, the analyst issues multiple per-repo calls
+  (one `-Repo` each). There is no single command that fans out across the whole
+  map; multi-repo coverage is achieved by repeated, explicit, per-repo
+  invocations.
+- `Action listrepos` prints the full configured map (all repos, keywords, and
+  the current default) to help choose which repository to query next.
 
-### Step 7: Optional source-level analysis
+Implication: the map is a routing table, not a search surface. Inference narrows
+to one default repo for convenience, but the full list remains available so the
+model can deliberately broaden the investigation one repository at a time.
 
-- Fetch up to five matched source files from GitHub Contents/Blob APIs.
-- Parse function boundaries.
-- Score crash relevance by evidence token overlap.
-- Detect candidate unchecked pointer dereferences.
-- Emit output/<KEY>/code-analysis.json.
+### Step 4: Context bundle generation and hand-off
 
-### Step 8: Analysis synthesis
+Implementation owner: Scripts/invoke-jira-rootcause.ps1 (`Build-ContextBundle`, `Invoke-AnalyzeAction`)
 
-- Generate evidence-only report:
+- Assemble a human- and model-readable context bundle from the gathered data:
+  fields, inferred default component, the full list of available repositories,
+  description, comments, linked issues, and accepted attachment log excerpts.
+- Write output/<KEY>/context-bundle.md and output/<KEY>/context.json.
+- Hand off to the chat model. The script performs no evidence parsing,
+  classification, query generation, or source scanning of its own.
+
+Important: the agent is **issue-type agnostic**. It does NOT pre-classify the
+problem into any single category. Raw
+JIRA text and logs are passed through verbatim so the model can diagnose any
+kind of issue (functional bug, build failure, config error, performance problem,
+etc.) in any language. The script applies no rule-based classification
+heuristics of its own.
+
+### Step 5: Model-driven investigation
+
+Implementation owner: the chat model, using the script's code-access actions.
+
+- The model forms a hypothesis from the context bundle.
+- It investigates the real code through the script's tool actions, scoped to a
+  chosen repository (default inferred repo, or any other via `-Repo`):
+  - `search`   - GitHub code search within one repo.
+  - `readfile` - numbered slice (or whole file) of a repo source file, cached.
+  - `listdir`  - list a repo directory.
+- Query terms, file choices, and the depth of investigation are decided by the
+  model based on the specific issue, not by fixed evidence heuristics.
+
+### Step 6: Evidence collection
+
+- Code-access actions return real repository content (search hits, file slices,
+  directory listings) that the model reads directly.
+- Each file is fetched from GitHub once and served from an on-disk cache for
+  subsequent reads, so the model can re-inspect ranges without extra calls.
+
+### Step 7: Analysis synthesis
+
+- The model writes an evidence-only report, typically covering:
   - Problem
-  - Crash evidence
-  - JIRA comments
-  - Attachments
-  - GitHub search results
-  - Source code analysis
+  - Evidence (from JIRA text, logs, and code actually read)
+  - JIRA comments and attachments
+  - Repository findings
   - Root cause
   - Repro steps
   - Suggested fix
   - Known gaps
-- Emit output/<KEY>/<KEY>-analysis.md.
-- Emit output/<KEY>/context.json.
+- Report is written to output/<KEY>/<KEY>-analysis.md.
+- The exact sections adapt to the issue type rather than a fixed template.
 
 ## 6. Data Contracts
 
@@ -193,13 +237,15 @@ Per entry includes:
 File: output/<KEY>/context.json
 
 Contains:
-- issue metadata
-- resolved module/repository
-- crash evidence summary
-- queriesRun
-- sourceFilesFetched
-- nullDerefCandidates
-- generated artifact paths
+- issue metadata (issueId, summary, status, priority)
+- inferredComponent, githubOrg, and resolved defaultRepo
+- availableRepos (full list from the module map)
+- commentCount, attachmentCount, linkedIssueCount
+- logAttachmentsIncluded
+- generated artifact paths (jsonPath, contextBundlePath, analysisPath)
+
+Note: fields such as crash evidence summary, queriesRun, sourceFilesFetched, and
+nullDerefCandidates are not part of the current context.json contract.
 
 ## 7. Credential and Secret Resolution
 
@@ -234,58 +280,38 @@ Safe changes:
 - Add new module entries.
 - Improve scoring logic while preserving deterministic output and top-score winner behavior.
 
-### B. Improve crash signal extraction
+### B. Adjust the context bundle
 
 Where:
-- Get-CrashEvidence in Scripts/invoke-jira-rootcause.ps1
+- Build-ContextBundle in Scripts/invoke-jira-rootcause.ps1
 
 Safe changes:
-- Add regex for new kernel signatures.
-- Add richer crash-type classes.
-- Preserve current fields in returned hashtable to keep report generation compatible.
+- Add fields or sections surfaced to the chat model.
+- Adjust how attachments, comments, or available repositories are presented.
+- Keep the bundle issue-type agnostic; do not pre-classify the problem.
 
-### C. Improve query quality
+### C. Adjust the code-access actions
 
 Where:
-- Get-CrashSearchQueries in Scripts/invoke-jira-rootcause.ps1
+- Invoke-SearchAction / Invoke-ReadFileAction / Invoke-ListDirAction in Scripts/invoke-jira-rootcause.ps1
 
 Safe changes:
-- Add additional label classes.
-- Tune prioritization limits.
-- Keep labels stable and human-readable for debugging in repo-search.txt.
-
-### D. Improve source-level heuristics
-
-Where:
-- Invoke-CrashCodeAnalysis in Scripts/invoke-jira-rootcause.ps1
-
-Safe changes:
-- Better function boundary parsing.
-- Better dataflow/null-check heuristics.
-- Keep output structure stable to avoid report breakage.
-
-### E. Adjust report format
-
-Where:
-- Build-AnalysisReport in Scripts/invoke-jira-rootcause.ps1
-
-Safe changes:
-- Add sections and better evidence tables.
-- Keep evidence-first stance and explicit [EVIDENCE NEEDED] gaps.
+- Tune result limits, caching, or output formatting.
+- Add new read-only repository actions the model can call.
+- Keep each action scoped to a single repository.
 
 ## 9. Error Handling and Abort Semantics
 
 Hard-stop errors:
 - githubOrg missing or placeholder.
-- GitHub pre-flight unreachable/unauthorized/forbidden.
 - Missing target githubRepo for inferred module.
 - Missing JIRA auth.
 
 Recoverable warnings:
-- No crash-specific queries generated (fallback query path used).
-- No C/H file matches found.
-- Individual source file fetch failures.
+- GitHub pre-flight unreachable/unauthorized/forbidden (run continues; code-access actions will fail until fixed).
+- No module keyword match (fallback to first/default repo).
 - Attachment download/read failures.
+- Individual code-access action failures (search/readfile/listdir).
 
 Design principle:
 - Fail fast for foundational dependencies.
@@ -295,34 +321,33 @@ Design principle:
 
 Current API behavior:
 - Code search is rate-limited via per-query delay.
-- Source file fetch is capped to first five unique matched C/H files.
+- Each repository file is fetched from GitHub once, then served from an on-disk cache.
 - Attachment text size is capped to avoid parser overload.
 
 Complexity hotspots:
-- Regex-heavy parsing in crash extraction.
-- Function boundary inference in C source analysis.
+- Module keyword scoring over combined JIRA text.
+- GitHub Enterprise API reliability and rate limits.
 
 ## 11. Validation Strategy
 
 Minimum validation after script edits:
 1. Run Scripts/_syntax-check.ps1.
 2. Run end-to-end on a known issue.
-3. Verify context.json module and repository correctness.
-4. Verify repo-search.txt includes labeled query blocks.
-5. Verify analysis markdown has no empty critical sections unless marked [EVIDENCE NEEDED].
+3. Verify context.json inferredComponent and defaultRepo correctness.
+4. Verify context-bundle.md lists the available repositories and issue context.
+5. Verify the model-written analysis markdown has no empty critical sections unless marked [EVIDENCE NEEDED].
 
 Recommended additional checks:
-- One issue with strong call trace evidence.
-- One issue with only sparse logs.
-- One issue where no module should match, to validate error path clarity.
+- One issue with rich logs/attachments.
+- One issue with only sparse text.
+- One issue where no module should match, to validate fallback/default repo behavior.
 
 ## 12. Change Impact Matrix
 
 - Changes in fetch-jira.ps1 impact authentication, attachment handling, and raw issue fidelity.
-- Changes in Resolve-Module impact repository routing and all downstream evidence.
-- Changes in Get-CrashEvidence impact query generation, root-cause classification, and report content.
-- Changes in Search-GitHubCode affect evidence volume and API reliability.
-- Changes in Build-AnalysisReport affect consumer readability and trust in outputs.
+- Changes in Resolve-Module impact repository routing and the inferred default repo.
+- Changes in Build-ContextBundle impact what the chat model sees and reasons over.
+- Changes in Search-GitHubCode / readfile / listdir actions affect the model's ability to investigate code.
 
 ## 13. Known Limitations
 
