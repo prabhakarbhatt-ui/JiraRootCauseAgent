@@ -1,0 +1,7 @@
+# Local credentials (never commit)
+config/jira-creds.json
+.jira-creds.json
+
+# Generated analysis outputs
+output/*
+!output/.gitkeep
