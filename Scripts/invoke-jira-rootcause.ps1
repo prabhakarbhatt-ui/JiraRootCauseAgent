@@ -552,7 +552,7 @@ function Invoke-AnalyzeAction {
         $attManifest = @(Get-Content $manifestPath -Raw | ConvertFrom-Json)
         foreach ($att in $attManifest) {
             $record = [ordered]@{ Filename = [string]$att.Filename; Author = [string]$att.Author; Analyzed = $false; Reason = [string]$att.SkippedReason; Chars = 0 }
-            if ($att.Downloaded -and $att.LocalPath -and (Test-Path $att.LocalPath)) {
+            if (($att.Downloaded -eq $true) -and (-not [string]::IsNullOrWhiteSpace([string]$att.LocalPath)) -and (Test-Path ([string]$att.LocalPath))) {
                 try {
                     $text = Read-LogAttachmentText -Path $att.LocalPath
                     if ($text -and $text.Trim().Length -gt 0) {

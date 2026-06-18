@@ -73,6 +73,12 @@ See `SETUP-GUIDE.md`.
 - Do not request secrets in chat — credentials are read from files / env vars.
 - Ground every claim in JIRA evidence or code you actually read; cite the source.
 - Never invent file contents, line numbers, function names, or APIs.
+- Always include a reproduction section. For deterministic bugs give exact
+  ordered steps (preconditions, inputs, commands, expected vs. actual). For
+  races / timing bugs, list the conditions that must coincide, a stress
+  procedure to make them overlap, and — when a debug build is acceptable — a
+  deterministic fault-injection variant that doubles as a regression test. Mark
+  any step you did not actually run as a derived/unverified strategy.
 - If evidence is insufficient, say so and list exactly what is needed. Do not
   fabricate a root cause or a fix.
 

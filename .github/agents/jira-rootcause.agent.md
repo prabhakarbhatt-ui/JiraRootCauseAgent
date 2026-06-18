@@ -72,8 +72,36 @@ different one.
 - Propose a concrete code change only when you have read the surrounding code.
   Show it as a unified diff or a clearly marked before/after snippet, citing the
   file path and line numbers you read.
+- **Always provide a reproduction section** (see the "Reproduction guidance"
+  below). Even when the issue does not include repro steps, reconstruct the
+  conditions from the evidence and code. Mark any step you did not actually run
+  as a derived/unverified strategy rather than an empirically confirmed repro.
 - Never request or print secrets. Credentials are read from files / env vars by
   the script only.
+
+## Reproduction guidance
+
+Produce the most actionable reproducer the evidence supports, and be explicit
+about how deterministic it is:
+
+- **Deterministic bug** (logic error, config/build failure, wrong result): give
+  exact, ordered steps — environment/preconditions, inputs, commands, and the
+  expected vs. actual result. Prefer a minimal failing case.
+- **Non-deterministic bug** (race, use-after-free, memory pressure, timing): you
+  usually cannot give a one-shot repro. Instead:
+  1. List the **conditions that must coincide** for the failure (grounded in the
+     code paths you read), e.g. which two threads/contexts must overlap.
+  2. Give a **stress procedure** that makes the overlap likely (load generation
+     plus the triggering event), using only standard tooling — no source changes.
+  3. Where a debug build is acceptable, give a **deterministic fault-injection**
+     variant (e.g. a targeted delay or `fail_*` hook that widens the race
+     window) that makes the failure fire on demand, and note that after the fix
+     the same injection no longer triggers it — i.e. it doubles as a regression
+     test.
+- Tie each repro step back to specific evidence or `file:line` you read. Do not
+  invent flags, sysctls, or APIs; only use ones you can cite.
+- If you genuinely cannot construct any repro, say so and list exactly what is
+  needed (e.g. vmcore, full stack trace, the input that triggered it).
 
 ## Required report structure
 
@@ -96,9 +124,14 @@ references (with URLs) for any code you rely on.
 Bullet list mapping each conclusion to its source (JIRA comment, log line, or
 file:line you read).
 
-## Steps to Reproduce
-Derived from JIRA. If not described, say so and give the closest reconstruction
-from the available evidence; mark anything unverified.
+## Reproduction
+Provide the most actionable reproducer the evidence supports, following the
+"Reproduction guidance" rules. For deterministic bugs, give exact ordered steps
+(preconditions, inputs, commands, expected vs. actual). For races / timing bugs,
+list the conditions that must coincide, a stress procedure to make them overlap,
+and — when a debug build is acceptable — a deterministic fault-injection variant
+that also serves as the regression test. Tie each step to evidence or file:line,
+and mark anything you did not actually run as a derived/unverified strategy.
 
 ## Suggested Fix
 A concrete, minimal fix. Include a code diff or before/after snippet when a code
