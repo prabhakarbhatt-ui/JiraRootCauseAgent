@@ -61,6 +61,12 @@
       "match": ["craype", "pe"],
       "repoRelativePath": "cdeux-craype",
       "githubRepo": "cdeux-craype"
+    },
+    {
+      "name": "hpc-shasta-os-uss-product-stream",
+      "match": ["product stream", "uss product stream", "iuf", "release media", "update_components", "uss media", "product packaging"],
+      "repoRelativePath": "hpc-shasta-os-uss-product-stream",
+      "githubRepo": "hpc-shasta-os-uss-product-stream"
     }
   ]
 }
