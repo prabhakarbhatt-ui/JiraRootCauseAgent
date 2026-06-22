@@ -57,7 +57,8 @@ CAST-40070
 JiraRootCauseAgent/
 ├── .github/
 │   ├── agents/jira-rootcause.agent.md     ← Copilot agent definition
-│   └── prompts/jira-rootcause.prompt.md   ← /jira-rootcause slash prompt
+│   ├── prompts/jira-rootcause.prompt.md   ← /jira-rootcause slash prompt
+│   └── copilot-instructions.md            ← Workspace-level Copilot instructions
 ├── config/
 │   ├── jira-creds.json.example            ← Copy to set up credentials
 │   ├── jira-creds.json                    ← Local credential fallback (gitignored)
@@ -65,7 +66,8 @@ JiraRootCauseAgent/
 ├── output/                                ← Generated analysis artifacts (gitignored)
 ├── Scripts/
 │   ├── fetch-jira.ps1                     ← Fetches JIRA JSON
-│   └── invoke-jira-rootcause.ps1          ← Main entrypoint
+│   ├── invoke-jira-rootcause.ps1          ← Main entrypoint
+│   └── _syntax-check.ps1                  ← Syntax validation helper
 ├── CONTRIBUTING.md
 ├── DESIGN-DOCUMENT.md
 ├── README.md                              ← This file
