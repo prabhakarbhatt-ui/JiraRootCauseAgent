@@ -8,7 +8,7 @@ param(
 
     [string]$IssueId,       # required for: analyze
     [string]$Query,         # required for: search
-    [string]$Path,          # required for: readfile; optional for: listdir
+    [AllowEmptyString()][string]$Path = "",     # required for: readfile; optional for: listdir
     [string]$Repo,          # optional: target repository (defaults to inferred/first)
     [int]$StartLine = 1,    # readfile: first 1-based line
     [int]$EndLine = 0,      # readfile: last 1-based line (0 = start + 1499; -1 = whole file)
@@ -513,7 +513,7 @@ function Build-ContextBundle {
     [void]$sb.AppendLine("   - Read file: powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>")
     [void]$sb.AppendLine("     Tip: each file is downloaded from GitHub only ONCE then cached on disk, so prefer FEWER, LARGER reads.")
     [void]$sb.AppendLine("     Use -EndLine -1 to read an entire file in a single call; omit -EndLine to read up to 1500 lines from -StartLine.")
-    [void]$sb.AppendLine("   - List dir:  powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action listdir -Path <dir> -Repo <repo>")
+    [void]$sb.AppendLine("   - List dir:  powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action listdir -Path <dir> -Repo <repo>`n     Tip: use -Path '.' to list the repo root (never pass -Path with an empty string).")
     [void]$sb.AppendLine("3. Verify every claim against code you actually read. Do not invent file contents or APIs.")
     [void]$sb.AppendLine("4. Write the final report to output/$($JiraData.Key)/$($JiraData.Key)-analysis.md.")
     [void]$sb.AppendLine("   The report MUST include the following sections (in order):")
@@ -667,7 +667,8 @@ function Invoke-ReadFileAction {
 function Invoke-ListDirAction {
     param([hashtable]$Ctx, [string]$Path, [string]$Repo)
     $repoName = Resolve-RepoName -Requested $Repo -Ctx $Ctx
-    $dir = if ($null -eq $Path) { "" } else { $Path }
+    # Normalise: omitted, empty, or '.' all mean repo root
+    $dir = if ([string]::IsNullOrWhiteSpace($Path) -or $Path -eq '.') { "" } else { $Path }
     $items = Get-GitHubDirectory -GitHubOrg $Ctx.Org -GitHubRepo $repoName -DirPath $dir -Token $Ctx.Token -GitHubBaseUrl $Ctx.BaseUrl
     if (-not $items -or $items.Count -eq 0) { Write-Output "No entries found at '$($Ctx.Org)/$repoName/$dir' (path may not exist)."; return }
     Write-Output "Directory '$($Ctx.Org)/$repoName/$dir':"
