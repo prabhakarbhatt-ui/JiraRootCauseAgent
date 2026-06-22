@@ -37,9 +37,10 @@ the issue key, or use the prompt:
 2. Read `context-bundle.md` and `context.json`; form a hypothesis.
 3. Investigate the real code using the script's tool actions (run via execute):
    - `-Action search   -Query '<terms>' -Repo <repo>`
-   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>`
+   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` (up to 1500 lines; omit `-EndLine` for 1500 from `-StartLine`, or `-EndLine -1` for the whole file; files are cached after first read — prefer fewer, larger reads)
    - `-Action listdir  -Path <dir> -Repo <repo>`
    - `-Action listrepos`
+   `-Repo` defaults to the inferred repository; pass it explicitly to target a different one.
 4. Verify every conclusion against code you actually read.
 5. Write the final report to `output/<KEY>/<KEY>-analysis.md`.
 
@@ -81,6 +82,69 @@ See `SETUP-GUIDE.md`.
   any step you did not actually run as a derived/unverified strategy.
 - If evidence is insufficient, say so and list exactly what is needed. Do not
   fabricate a root cause or a fix.
+
+## Reproduction guidance
+
+Produce the most actionable reproducer the evidence supports, and be explicit
+about how deterministic it is:
+
+- **Deterministic bug** (logic error, config/build failure, wrong result): give
+  exact, ordered steps — environment/preconditions, inputs, commands, and the
+  expected vs. actual result. Prefer a minimal failing case.
+- **Non-deterministic bug** (race, use-after-free, memory pressure, timing): you
+  usually cannot give a one-shot repro. Instead:
+  1. List the **conditions that must coincide** for the failure (grounded in the
+     code paths you read), e.g. which two threads/contexts must overlap.
+  2. Give a **stress procedure** that makes the overlap likely (load generation
+     plus the triggering event), using only standard tooling — no source changes.
+  3. Where a debug build is acceptable, give a **deterministic fault-injection**
+     variant (e.g. a targeted delay or `fail_*` hook that widens the race
+     window) that makes the failure fire on demand, and note that after the fix
+     the same injection no longer triggers it — i.e. it doubles as a regression
+     test.
+- Tie each repro step back to specific evidence or `file:line` you read. Do not
+  invent flags, sysctls, or APIs; only use ones you can cite.
+- If you genuinely cannot construct any repro, say so and list exactly what is
+  needed (e.g. vmcore, full stack trace, the input that triggered it).
+
+## Required report structure
+
+```markdown
+# Root Cause Analysis: <KEY>
+
+## Summary
+One or two sentences: what is broken and why.
+
+## Issue Classification
+- Type: (crash / logic bug / race / performance / config / build / security / other)
+- Affected component & repository:
+- Primary language:
+
+## Root Cause
+The specific cause, grounded in evidence. Cite JIRA fields and exact file:line
+references (with URLs) for any code you rely on.
+
+## Evidence
+Bullet list mapping each conclusion to its source (JIRA comment, log line, or
+file:line you read).
+
+## Reproduction
+The most actionable reproducer the evidence supports — follow the Reproduction
+guidance rules above.
+
+## Suggested Fix
+A concrete, minimal fix. Include a code diff or before/after snippet when a code
+change applies and you have read the surrounding code. For non-code fixes
+(config/process), give exact steps. If you cannot determine a fix, explain why
+and list what is needed.
+
+## Confidence & Open Questions
+State your confidence (high/medium/low) and list assumptions and unresolved
+questions.
+```
+
+It is acceptable — and expected — to report "insufficient evidence" rather than
+to guess.
 
 ## Deliverables
 

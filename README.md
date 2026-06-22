@@ -43,12 +43,6 @@ CAST-40070
 /jira-rootcause CAST-40070
 ```
 
-**Command line only** — From the `JiraRootCauseAgent/` directory:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -IssueId CAST-40070
-```
-
 ## Documentation
 
 | Document | Contents |
@@ -63,8 +57,7 @@ powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Issu
 JiraRootCauseAgent/
 ├── .github/
 │   ├── agents/jira-rootcause.agent.md     ← Copilot agent definition
-│   ├── prompts/jira-rootcause.prompt.md   ← /jira-rootcause slash prompt
-│   └── skills/jira-repo-bridge/SKILL.md   ← Step-by-step skill guide
+│   └── prompts/jira-rootcause.prompt.md   ← /jira-rootcause slash prompt
 ├── config/
 │   ├── jira-creds.json.example            ← Copy to set up credentials
 │   ├── jira-creds.json                    ← Local credential fallback (gitignored)

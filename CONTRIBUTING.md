@@ -101,7 +101,6 @@ Main entrypoint. Change this if:
 |------|---------------|
 | `.github/agents/jira-rootcause.agent.md` | Agent behaviour changes, new constraints, new output format |
 | `.github/prompts/jira-rootcause.prompt.md` | Prompt workflow or credential guidance changes |
-| `.github/skills/jira-repo-bridge/SKILL.md` | Step-by-step skill instructions change or new troubleshooting entries |
 
 If you keep this repository nested inside a personal parent folder and open that parent as your VS Code workspace, also update your local copies of these files under the parent root's `.github/` folder. That parent-root copy is a personal convenience only and is **not** part of the distributed repository — the canonical files always live in `JiraRootCauseAgent/.github/`.
 

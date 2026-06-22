@@ -521,7 +521,7 @@ function Build-ContextBundle {
     [void]$sb.AppendLine("   - Timeline (if log timestamps are available)")
     [void]$sb.AppendLine("   - Root Cause  ← REQUIRED in every report; cite exact file path + line numbers from code you read")
     [void]$sb.AppendLine("   - Proposed Fix  ← REQUIRED in every report; show as unified diff or before/after snippet with file path + line numbers")
-    [void]$sb.AppendLine("       * If evidence is insufficient for a fix, explain what additional data is needed — do NOT omit the section")
+    [void]$sb.AppendLine("       * If evidence is insufficient for a fix, explain what additional data is needed - do NOT omit the section")
     [void]$sb.AppendLine("   - Reproduction Steps  ← REQUIRED in every report, no exceptions")
     [void]$sb.AppendLine("       * Deterministic bug: exact ordered steps (preconditions, inputs, commands, expected vs. actual).")
     [void]$sb.AppendLine("       * Race / timing / memory-pressure bug: (a) conditions that must coincide (grounded in code),")
