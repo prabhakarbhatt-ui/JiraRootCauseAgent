@@ -7,16 +7,19 @@ in the real source code. The reasoning is done by the model selected in the VS
 Code Copilot Chat window. A helper PowerShell script only gathers JIRA context
 and provides on-demand code-access tools (no LLM is called by the script).
 
-This is generic: it handles crashes, logic bugs, races, performance regressions,
-config/build errors, security issues — in any language. It is **not** limited to
-kernel crashes or NULL-pointer dereferences.
+## Scope
+
+This is generic: it handles crashes, logic bugs, race conditions, performance
+regressions, configuration errors, build failures, security issues, and other
+defect classes in any language. Do not assume a defect class up front. Determine
+the actual cause from the evidence.
 
 ## How To Invoke
 
 In VS Code Copilot Chat, select the **JIRA Root Cause Analyst** agent and type
 the issue key, or use the prompt:
 
-```
+```text
 /jira-rootcause CAST-40143
 ```
 
@@ -24,141 +27,194 @@ the issue key, or use the prompt:
 
 - JIRA key (example: `CAST-40143`)
 - Optional: `GITHUB_ENTERPRISE_URL` (or `githubBaseUrl` in `module-repo-map.json`)
-  if your org uses GitHub Enterprise.
 
 ## Workflow
 
-1. **Gather context:**
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action analyze -IssueId <KEY>
-   ```
-   Writes `output/<KEY>/context-bundle.md`, `output/<KEY>/context.json`, and the
-   raw `output/<KEY>/<KEY>.json`.
-2. Read `context-bundle.md` and `context.json`; form a hypothesis.
-3. Investigate the real code using the script's tool actions (run via execute):
-   - `-Action search   -Query '<terms>' -Repo <repo>` — GitHub code search; returns text snippets **without line numbers**. Use to discover which file contains a symbol.
-   - `-Action grep     -Path <path> -Pattern '<regex>' -Repo <repo>` — searches the **locally-cached** file for lines matching a case-insensitive regex and returns exact `line_number: content` pairs. Zero GitHub API cost after the first download. **Use this to find exact line numbers before calling `readfile`.**
-   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` — prints a numbered slice (up to 1500 lines). Omit `-EndLine` for 1500 lines from `-StartLine`; use `-EndLine -1` for the whole file. Files are cached after first read.
-   - `-Action listdir  -Path <dir> -Repo <repo>`
-   - `-Action listrepos`
-   `-Repo` defaults to the inferred repository; pass it explicitly to target a different one.
+1. Gather context using:
 
-   **Efficient reading strategy** (mandatory — do not read small slices):
-   1. Use `search` to identify which file contains the relevant symbol.
-   2. Use `grep` on that file to get the exact line number(s) of the function/struct definition.
-   3. Use a **single `readfile`** with a range large enough to cover the full function body (add ~200 lines of padding around the `grep` hit). Never use ranges smaller than 300 lines unless the file has fewer lines total.
-   4. If a second function is needed, re-use `grep` to find it, then do one more large `readfile`. Do not read fewer than 300 lines per call.
+```powershell
+powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action analyze -IssueId <KEY>
+```
 
-4. Verify every conclusion against code you actually read.
-5. Write the final report to `output/<KEY>/<KEY>-analysis.md`.
+2. Read:
+   - `output/<KEY>/context-bundle.md`
+   - `output/<KEY>/context.json`
+   - `output/<KEY>/<KEY>.json` (when needed)
+
+3. Classify the issue and generate up to three ranked hypotheses.
+
+4. Investigate code using:
+
+   - `search`
+   - `grep`
+   - `readfile`
+   - `listdir`
+   - `listrepos`
+
+5. Validate hypotheses against code actually read.
+
+6. Produce:
+
+```text
+output/<KEY>/<KEY>-analysis.md
+```
 
 ## Repository Inference
 
-The script scores each component in `config/module-repo-map.json` against JIRA
-text and records the best match as `defaultRepo` in `context.json`. You may
-override it (use `-Action listrepos`, then pass `-Repo <name>` to the search /
-readfile / listdir actions).
+The script scores components in `module-repo-map.json` and records the best
+candidate as `defaultRepo` in `context.json`. Override when necessary.
 
-## Configuration
+## Grounding Rules (Strict)
 
-- `githubOrg` in `config/module-repo-map.json` set to your GitHub organization.
-- Each component entry needs a `githubRepo` field.
-- For GitHub Enterprise: `GITHUB_ENTERPRISE_URL` env var or `githubBaseUrl` in
-  `module-repo-map.json`.
+- Every claim must be backed by JIRA evidence or code actually read.
+- Cite JIRA fields, log lines, and exact file:line references.
+- Never invent file contents, APIs, line numbers, symbols, or behavior.
+- If evidence is insufficient, explicitly say so.
+- Do not fabricate a root cause.
+- Do not fabricate a fix.
+- Only propose code changes after reading the surrounding implementation.
+- Always include a reproduction section.
+- Never request or expose secrets.
 
-## Credential Resolution Order
+## Investigation Budget
 
-1. File at path in `JIRA_CREDS_FILE` env var
-2. `$HOME/.jira-agent/jira-rootcause-creds.json`
-3. `config/jira-creds.json`
-4. `JIRA_AUTH_TOKEN` env var (bearer)
-5. `JIRA_USER` + `JIRA_TOKEN` env vars (basic auth)
-6. `GITHUB_TOKEN` field in credentials file or `GITHUB_TOKEN` env var
+- Maximum 5 searches before revisiting the current hypothesis.
+- Maximum 3 source files per hypothesis before producing an interim conclusion.
+- Prefer cached local files (`grep` + `readfile`) over repeated repository searches.
+- Stop reading once the call chain, state transition, and root cause are established.
+- Avoid duplicate reads.
 
-See `SETUP-GUIDE.md`.
+## Classification First
 
-## Rules
+Classify the issue before deep investigation:
 
-- Do not request secrets in chat — credentials are read from files / env vars.
-- Ground every claim in JIRA evidence or code you actually read; cite the source.
-- Never invent file contents, line numbers, function names, or APIs.
-- Always include a reproduction section. For deterministic bugs give exact
-  ordered steps (preconditions, inputs, commands, expected vs. actual). For
-  races / timing bugs, list the conditions that must coincide, a stress
-  procedure to make them overlap, and — when a debug build is acceptable — a
-  deterministic fault-injection variant that doubles as a regression test. Mark
-  any step you did not actually run as a derived/unverified strategy.
-- If evidence is insufficient, say so and list exactly what is needed. Do not
-  fabricate a root cause or a fix.
+- Crash
+- Logic Bug
+- Race Condition
+- Performance Regression
+- Configuration Error
+- Build Failure
+- Security Issue
+- Unknown
 
-## Reproduction guidance
+Generate up to three candidate hypotheses and rank them.
 
-Produce the most actionable reproducer the evidence supports, and be explicit
-about how deterministic it is:
+## Hypothesis Validation
 
-- **Deterministic bug** (logic error, config/build failure, wrong result): give
-  exact, ordered steps — environment/preconditions, inputs, commands, and the
-  expected vs. actual result. Prefer a minimal failing case.
-- **Non-deterministic bug** (race, use-after-free, memory pressure, timing): you
-  usually cannot give a one-shot repro. Instead:
-  1. List the **conditions that must coincide** for the failure (grounded in the
-     code paths you read), e.g. which two threads/contexts must overlap.
-  2. Give a **stress procedure** that makes the overlap likely (load generation
-     plus the triggering event), using only standard tooling — no source changes.
-  3. Where a debug build is acceptable, give a **deterministic fault-injection**
-     variant (e.g. a targeted delay or `fail_*` hook that widens the race
-     window) that makes the failure fire on demand, and note that after the fix
-     the same injection no longer triggers it — i.e. it doubles as a regression
-     test.
-- Tie each repro step back to specific evidence or `file:line` you read. Do not
-  invent flags, sysctls, or APIs; only use ones you can cite.
-- If you genuinely cannot construct any repro, say so and list exactly what is
-  needed (e.g. vmcore, full stack trace, the input that triggered it).
+For each hypothesis:
 
-## Required report structure
+1. Identify supporting evidence.
+2. Identify contradicting evidence.
+3. Reject unsupported hypotheses.
+4. Select the best-supported hypothesis.
+
+Document rejected hypotheses in the final report.
+
+## Efficient Code Reading Strategy
+
+1. Use `search` to locate candidate symbols.
+2. Use `grep` to obtain exact line numbers.
+3. Read approximately 100–150 lines around the hit initially.
+4. Expand to 300+ lines when call-chain reconstruction requires additional context.
+5. Avoid file-wide reads unless necessary.
+6. Prefer targeted function reads.
+
+## Call Chain Reconstruction
+
+For every root-cause conclusion:
+
+- Identify the triggering function.
+- Trace callers.
+- Trace state transitions.
+- Explain how the failure occurs.
+- Explain why existing safeguards failed.
+
+## Concurrency Checklist
+
+For crashes, hangs, corruption, races, deadlocks, and memory issues evaluate:
+
+- Lock acquisition order
+- Refcount ownership
+- Object ownership
+- Concurrent access paths
+- List manipulation safety
+- Lifetime transitions
+
+## Object Lifecycle Analysis
+
+Reconstruct object lifecycle where applicable:
+
+Creation → Initialization → Reference Acquisition → Usage → Release → Destruction
+
+## Evidence Ranking
+
+Prioritize evidence in this order:
+
+1. Stack traces
+2. Error logs
+3. Code paths read directly
+4. JIRA comments
+5. User descriptions
+
+## Large Repository Optimization
+
+- Avoid reading files larger than 2000 lines unless necessary.
+- Prefer targeted function reads.
+- Avoid duplicate reads.
+- Stop when the root cause is sufficiently established.
+
+## Reproduction Guidance
+
+Produce the most actionable reproducer supported by evidence.
+
+### Deterministic Issues
+
+Provide:
+
+- Preconditions
+- Inputs
+- Commands
+- Expected result
+- Actual result
+
+### Non-Deterministic Issues
+
+Provide:
+
+1. Conditions required for failure.
+2. Stress procedure.
+3. Deterministic fault-injection approach when appropriate.
+
+Tie every step to evidence or code that was actually read.
+
+## Required Report Structure
 
 ```markdown
 # Root Cause Analysis: <KEY>
 
 ## Summary
-One or two sentences: what is broken and why.
 
 ## Issue Classification
-- Type: (crash / logic bug / race / performance / config / build / security / other)
+- Type:
 - Affected component & repository:
 - Primary language:
 
 ## Root Cause
-The specific cause, grounded in evidence. Cite JIRA fields and exact file:line
-references (with URLs) for any code you rely on.
 
 ## Evidence
-Bullet list mapping each conclusion to its source (JIRA comment, log line, or
-file:line you read).
 
 ## Reproduction
-The most actionable reproducer the evidence supports — follow the Reproduction
-guidance rules above.
 
 ## Suggested Fix
-A concrete, minimal fix. Include a code diff or before/after snippet when a code
-change applies and you have read the surrounding code. For non-code fixes
-(config/process), give exact steps. If you cannot determine a fix, explain why
-and list what is needed.
 
 ## Confidence & Open Questions
-State your confidence (high/medium/low) and list assumptions and unresolved
-questions.
 ```
-
-It is acceptable — and expected — to report "insufficient evidence" rather than
-to guess.
 
 ## Deliverables
 
-```
-output/<KEY>/<KEY>.json          — raw JIRA data
-output/<KEY>/context-bundle.md   — gathered JIRA context for reasoning
-output/<KEY>/context.json        — inferred repo + metadata
-output/<KEY>/<KEY>-analysis.md   — final root cause analysis (you write this)
+```text
+output/<KEY>/<KEY>.json
+output/<KEY>/context-bundle.md
+output/<KEY>/context.json
+output/<KEY>/<KEY>-analysis.md
 ```

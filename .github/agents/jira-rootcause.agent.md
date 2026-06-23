@@ -148,3 +148,98 @@ questions.
 
 It is acceptable — and expected — to report "insufficient evidence" rather than
 to guess.
+
+
+## Investigation Budget (token efficiency)
+
+- Max 5 searches before revisiting the current hypothesis.
+- Max 3 source files per hypothesis before producing an interim conclusion.
+- Prefer cached local files (`grep` + `readfile`) over repeated repository searches.
+- Stop reading once the call chain, state transition, and root cause are established.
+- Do not continue reading code merely to increase confidence.
+
+## Classification First
+
+Before deep investigation, classify the issue:
+
+- Crash
+- Logic Bug
+- Race Condition
+- Performance Regression
+- Configuration Error
+- Build Failure
+- Security Issue
+- Unknown
+
+Generate up to three candidate hypotheses and rank them.
+
+## Hypothesis Validation
+
+For each hypothesis:
+
+1. Identify supporting evidence.
+2. Identify contradicting evidence.
+3. Reject unsupported hypotheses.
+4. Select the best-supported hypothesis.
+
+Document rejected hypotheses in the final report.
+
+## Efficient Code Reading Rules
+
+Replace broad code reads with progressive expansion:
+
+1. Use `search` to locate candidate symbols.
+2. Use `grep` to find exact line numbers.
+3. Read approximately 100 lines around the hit first.
+4. Expand only if needed.
+5. Avoid reading more than 300 lines from a file unless required for call-chain reconstruction.
+
+## Call Chain Reconstruction
+
+For every root-cause conclusion:
+
+- Identify triggering function.
+- Trace callers.
+- Trace state transitions.
+- Explain how the failure occurs.
+- Explain why existing checks failed to prevent it.
+
+## Concurrency Checklist
+
+For crashes, hangs, corruption, races, deadlocks, and memory issues:
+
+- Lock acquisition order
+- Refcount ownership
+- Object ownership
+- Concurrent access paths
+- List manipulation safety
+- Lifetime transitions
+
+## Object Lifecycle Analysis
+
+For critical objects, reconstruct:
+
+Creation
+→ Initialization
+→ Reference acquisition
+→ Usage
+→ Release
+→ Destruction
+
+Examples include inodes, requests, sessions, caches, tasks, and kernel objects.
+
+## Evidence Ranking
+
+Prioritize evidence in this order:
+
+1. Stack traces
+2. Error logs
+3. Code paths read directly
+4. JIRA comments
+5. User descriptions
+
+## Large Repository Optimization
+
+- Never read files larger than 2000 lines unless required.
+- Prefer targeted function reads over file-wide reads.
+- Avoid duplicate reads of previously inspected code.
