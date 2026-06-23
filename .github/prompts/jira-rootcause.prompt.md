@@ -36,11 +36,19 @@ the issue key, or use the prompt:
    raw `output/<KEY>/<KEY>.json`.
 2. Read `context-bundle.md` and `context.json`; form a hypothesis.
 3. Investigate the real code using the script's tool actions (run via execute):
-   - `-Action search   -Query '<terms>' -Repo <repo>`
-   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` (up to 1500 lines; omit `-EndLine` for 1500 from `-StartLine`, or `-EndLine -1` for the whole file; files are cached after first read — prefer fewer, larger reads)
+   - `-Action search   -Query '<terms>' -Repo <repo>` — GitHub code search; returns text snippets **without line numbers**. Use to discover which file contains a symbol.
+   - `-Action grep     -Path <path> -Pattern '<regex>' -Repo <repo>` — searches the **locally-cached** file for lines matching a case-insensitive regex and returns exact `line_number: content` pairs. Zero GitHub API cost after the first download. **Use this to find exact line numbers before calling `readfile`.**
+   - `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` — prints a numbered slice (up to 1500 lines). Omit `-EndLine` for 1500 lines from `-StartLine`; use `-EndLine -1` for the whole file. Files are cached after first read.
    - `-Action listdir  -Path <dir> -Repo <repo>`
    - `-Action listrepos`
    `-Repo` defaults to the inferred repository; pass it explicitly to target a different one.
+
+   **Efficient reading strategy** (mandatory — do not read small slices):
+   1. Use `search` to identify which file contains the relevant symbol.
+   2. Use `grep` on that file to get the exact line number(s) of the function/struct definition.
+   3. Use a **single `readfile`** with a range large enough to cover the full function body (add ~200 lines of padding around the `grep` hit). Never use ranges smaller than 300 lines unless the file has fewer lines total.
+   4. If a second function is needed, re-use `grep` to find it, then do one more large `readfile`. Do not read fewer than 300 lines per call.
+
 4. Verify every conclusion against code you actually read.
 5. Write the final report to `output/<KEY>/<KEY>-analysis.md`.
 

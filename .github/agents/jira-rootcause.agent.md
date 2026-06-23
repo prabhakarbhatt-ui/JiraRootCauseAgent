@@ -27,8 +27,9 @@ run via the `execute` tool:
 |--------|---------|---------|
 | analyze | `-Action analyze -IssueId <KEY>` | Fetch JIRA, download non-assignee log attachments, write `output/<KEY>/context-bundle.md` + `context.json`. Run this first. |
 | listrepos | `-Action listrepos` | List configured component → repository mappings. |
-| search | `-Action search -Query '<terms>' -Repo <repo>` | Code-search the (Enterprise) GitHub repo. |
-| readfile | `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` | Print a numbered slice of a source file (up to 1500 lines; omit `-EndLine` for 1500 from `-StartLine`, or use `-EndLine -1` for the whole file). Files are cached on disk after the first read, so prefer fewer, larger reads. |
+| search | `-Action search -Query '<terms>' -Repo <repo>` | Code-search the (Enterprise) GitHub repo. Returns text snippets **without line numbers**. Use to identify which file contains a symbol. |
+| grep | `-Action grep -Path <path> -Pattern '<regex>' -Repo <repo>` | Search the **locally-cached** file for lines matching a case-insensitive regex. Returns exact `line_number: content` pairs. Zero GitHub API cost after first download. **Use this to find exact line numbers before calling `readfile`.** |
+| readfile | `-Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>` | Print a numbered slice of a source file (up to 1500 lines; omit `-EndLine` for 1500 from `-StartLine`, or use `-EndLine -1` for the whole file). Files are cached on disk after the first read. |
 | listdir | `-Action listdir -Path <dir> -Repo <repo>` | List a repository directory. |
 
 `-Repo` defaults to the inferred repository; pass it explicitly when you target a
@@ -51,11 +52,12 @@ different one.
    `context.json`, or run `-Action listrepos` and pick a better-fitting repo if
    the inference looks wrong.
 
-4. **Investigate the real code.** Use `search` to locate relevant symbols /
-   functions / error strings / log phrases, then `readfile` to read the actual
-   code around them. Use `listdir` to discover structure. **Read code before you
-   conclude anything about it.** Revise your hypothesis when evidence contradicts
-   it and keep digging.
+4. **Investigate the real code.** Follow this sequence to avoid wasted reads:
+   1. Use `search` to identify which file contains the relevant symbol or phrase.
+   2. Use `grep` on that file with a precise regex (e.g. `'^int cleanup_reqs'`) to get the **exact line number**.
+   3. Use a **single `readfile`** covering the full function body — add ~200 lines of padding around the `grep` hit. Never use a range smaller than 300 lines unless the file is shorter.
+   4. Repeat `grep` + `readfile` for each additional function needed. Do not read in small slices.
+   Use `listdir` to discover repo structure when needed. **Read code before concluding anything.** Revise your hypothesis when evidence contradicts it and keep digging.
 
 5. **Write the report** to `output/<KEY>/<KEY>-analysis.md` using the structure
    below.

@@ -3,15 +3,17 @@ param(
     # issue; the others are on-demand code-access tools the chat model invokes
     # while reasoning (so the *configured VS Code Copilot model* does the
     # analysis - this script never calls an LLM itself).
-    [ValidateSet("analyze", "search", "readfile", "listdir", "listrepos")]
+    [ValidateSet("analyze", "search", "readfile", "listdir", "listrepos", "grep")]
     [string]$Action = "analyze",
 
     [string]$IssueId,       # required for: analyze
     [string]$Query,         # required for: search
-    [AllowEmptyString()][string]$Path = "",     # required for: readfile; optional for: listdir
+    [AllowEmptyString()][string]$Path = "",     # required for: readfile/grep; optional for: listdir
+    [string]$Pattern = "",  # required for: grep (regex; case-insensitive)
     [string]$Repo,          # optional: target repository (defaults to inferred/first)
     [int]$StartLine = 1,    # readfile: first 1-based line
     [int]$EndLine = 0,      # readfile: last 1-based line (0 = start + 1499; -1 = whole file)
+    [int]$MaxResults = 100, # grep: maximum matching lines to return
 
     [string]$MapFile = "config/module-repo-map.json",
     [string]$OutputDir = "output"
@@ -510,10 +512,16 @@ function Build-ContextBundle {
     [void]$sb.AppendLine("1. Form a hypothesis about the component and likely cause from the evidence above.")
     [void]$sb.AppendLine("2. Investigate the real code using the script's actions (run via your execute tool):")
     [void]$sb.AppendLine("   - Search:    powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action search -Query '<terms>' -Repo <repo>")
+    [void]$sb.AppendLine("     Returns text snippets WITHOUT line numbers. Use to find which file contains a symbol.")
+    [void]$sb.AppendLine("   - Grep:      powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action grep -Path <path> -Pattern '<regex>' -Repo <repo>")
+    [void]$sb.AppendLine("     Searches the locally-cached file and returns exact LINE NUMBERS matching a case-insensitive regex.")
+    [void]$sb.AppendLine("     Zero GitHub API cost after first download. USE THIS to find exact line numbers before calling readfile.")
     [void]$sb.AppendLine("   - Read file: powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action readfile -Path <path> -Repo <repo> -StartLine <n> -EndLine <m>")
-    [void]$sb.AppendLine("     Tip: each file is downloaded from GitHub only ONCE then cached on disk, so prefer FEWER, LARGER reads.")
-    [void]$sb.AppendLine("     Use -EndLine -1 to read an entire file in a single call; omit -EndLine to read up to 1500 lines from -StartLine.")
-    [void]$sb.AppendLine("   - List dir:  powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action listdir -Path <dir> -Repo <repo>`n     Tip: use -Path '.' to list the repo root (never pass -Path with an empty string).")
+    [void]$sb.AppendLine("     Each file is downloaded from GitHub only ONCE then served from disk cache.")
+    [void]$sb.AppendLine("     Use -EndLine -1 to read an entire file; omit -EndLine for up to 1500 lines from -StartLine.")
+    [void]$sb.AppendLine("     NEVER read fewer than 300 lines per call. Use grep first to locate the target, then ONE large readfile.")
+    [void]$sb.AppendLine("   - List dir:  powershell -ExecutionPolicy Bypass -File Scripts/invoke-jira-rootcause.ps1 -Action listdir -Path <dir> -Repo <repo>")
+    [void]$sb.AppendLine("     Tip: use -Path '.' to list the repo root (never pass -Path with an empty string).")
     [void]$sb.AppendLine("3. Verify every claim against code you actually read. Do not invent file contents or APIs.")
     [void]$sb.AppendLine("4. Write the final report to output/$($JiraData.Key)/$($JiraData.Key)-analysis.md.")
     [void]$sb.AppendLine("   The report MUST include the following sections (in order):")
@@ -686,6 +694,34 @@ function Invoke-ListReposAction {
     Write-Output "Default repository: $($Ctx.DefaultRepo)"
 }
 
+# Search the locally-cached copy of a file for lines matching a regex.
+# Returns exact 1-based line numbers at zero GitHub API cost (after first download).
+function Invoke-GrepAction {
+    param([hashtable]$Ctx, [string]$Pattern, [string]$Path, [string]$Repo, [int]$MaxResults)
+    if ([string]::IsNullOrWhiteSpace($Pattern)) { throw "The 'grep' action requires -Pattern." }
+    if ([string]::IsNullOrWhiteSpace($Path))    { throw "The 'grep' action requires -Path." }
+    $repoName = Resolve-RepoName -Requested $Repo -Ctx $Ctx
+    $file = Get-RepoFileCached -Ctx $Ctx -RepoName $repoName -FilePath $Path
+    if (-not $file) { Write-Output "File not found (or too large/binary): $($Ctx.Org)/$repoName/$Path"; return }
+
+    $source = if ($file.FromCache) { "local cache" } else { "GitHub (now cached)" }
+    Write-Output "Grep: $Pattern  in  $($Ctx.Org)/$repoName/$Path  ($($file.Lines.Count) lines)  [source: $source]"
+    Write-Output "URL: $($file.HtmlUrl)"
+
+    $hits = 0
+    for ($i = 0; $i -lt $file.Lines.Count; $i++) {
+        if ($file.Lines[$i] -imatch $Pattern) {
+            Write-Output ("{0,6}: {1}" -f ($i + 1), $file.Lines[$i])
+            $hits++
+            if ($hits -ge $MaxResults) {
+                Write-Output "[... output capped at $MaxResults matches; use a more specific -Pattern or -StartLine/-EndLine on readfile to narrow down ...]"
+                break
+            }
+        }
+    }
+    if ($hits -eq 0) { Write-Output "(no matches)" }
+}
+
 # ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
@@ -704,6 +740,7 @@ try {
         "readfile"  { Invoke-ReadFileAction -Ctx $ctx -Path $Path -Repo $Repo -StartLine $StartLine -EndLine $EndLine }
         "listdir"   { Invoke-ListDirAction  -Ctx $ctx -Path $Path -Repo $Repo }
         "listrepos" { Invoke-ListReposAction -Ctx $ctx }
+        "grep"      { Invoke-GrepAction     -Ctx $ctx -Pattern $Pattern -Path $Path -Repo $Repo -MaxResults $MaxResults }
     }
 }
 finally {
